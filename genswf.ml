@@ -563,8 +563,20 @@ let convert_header com (w,h,fps,bg) =
 		h_compressed = not (Common.defined com "no-swf-compress");
 	} , bg
 
+type raw_header = {mutable w:int;mutable h:int;mutable f:float;mutable b:int};;
+
+let raw_default_header = (400,300,30.,0xFFFFFF)
+
 let default_header com =
-	convert_header com (400,300,30.,0xFFFFFF)
+	convert_header com raw_default_header
+
+let color_of_string s =
+	let len = String.length s in 
+		if len = 0 then 0xffffff
+		else if s.[0] = '#' then
+			int_of_string ("0x" ^ (String.sub s 1 (len-1)))
+		else
+			int_of_string s
 
 type dependency_kind =
 	| DKInherit
@@ -964,7 +976,46 @@ let generate com swf_header =
 	) com.swf_libs;
   (* build haxe swf *)
 	let tags = if isf9 then build_swf9 com file swc else build_swf8 com codeclip exports in
-	let header, bg = (match swf_header with None -> default_header com | Some h -> convert_header com h) in
+	let header, bg = (match swf_header with 
+		| Some h -> convert_header com h
+		| _ ->
+			let dh, bg = default_header com in
+				match com.main with
+				| Some e -> (
+					match e.eexpr with
+					| TCall ({eexpr=TField({eexpr=TTypeExpr(TClassDecl tc)},_)} ,_) ->
+						match Genswf9.extract_meta tc.cl_meta with
+							| Some m ->
+								let rec loop a =
+									match a with
+										| [] -> dh, bg
+										| {hlmeta_name="SWF";hlmeta_data=_} as x :: _ ->
+											let rh = match raw_default_header with | (a,b,c,d) -> {w=a;h=b;f=c;b=d} in
+											let rec loop p = match p with
+												| [] -> ()
+												| (Some "width", s) :: tl  -> 
+													rh.w <- int_of_string s;
+													loop tl
+												| (Some "height", s) :: tl  -> 
+													rh.h <- int_of_string s;
+													loop tl
+												| (Some "frameRate", s) :: tl  -> 
+													rh.f <- float_of_string s;
+													loop tl
+												| (Some "backgroundColor", s) :: tl  -> 
+													rh.b <- color_of_string s;
+													loop tl												
+												| _ :: tl -> loop tl
+											in
+												loop (Array.to_list x.hlmeta_data);
+												convert_header com (rh.w, rh.h, rh.f, rh.b)
+										| _ :: tl -> loop tl
+								in loop (Array.to_list m) 
+							| _ -> dh, bg
+					| _ -> dh, bg
+				)
+				| _ -> dh, bg
+	) in
 	let bg = tag (TSetBgColor { cr = bg lsr 16; cg = (bg lsr 8) land 0xFF; cb = bg land 0xFF }) in
 	let debug = (if isf9 && Common.defined com "fdb" then [tag (TEnableDebugger2 (0,""))] else []) in
 	let fattr = (if com.flash_version < 8. then [] else
