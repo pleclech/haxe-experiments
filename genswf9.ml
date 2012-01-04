@@ -16,6 +16,9 @@
  *  along with this program; if not, write to the Free Software
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *)
+
+ (* pleclech add Float, Int, Bool to possible metadata values *)
+
 open Ast
 open Type
 open As3
@@ -1843,7 +1846,13 @@ let extract_meta meta =
 			let mk_arg (a,p) =
 				match a with
 				| EConst (String s) -> (None, s)
-				| EBinop (OpAssign,(EConst (Ident n | Type n),_),(EConst (String s),_)) -> (Some n, s)
+				| EBinop (OpAssign,(EConst (Ident n | Type n),_),(EConst (c),_)) -> 
+					let s = match c with
+						| String x | Float x | Int x -> x
+						| Ident "true" -> "true"
+						| Ident "false" -> "false"
+						| _ -> error "Invalid meta definition" p
+					in (Some n, s)
 				| _ -> error "Invalid meta definition" p
 			in
 			{ hlmeta_name = n; hlmeta_data = Array.of_list (List.map mk_arg args) } :: loop l
