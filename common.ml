@@ -63,6 +63,9 @@ type context = {
 	mutable load_extern_type : (path -> pos -> Ast.package option) list; (* allow finding types which are not in sources *)
 	mutable filters : (unit -> unit) list;
 	mutable defines_signature : string option;
+	(* add input format option to be able to choose another parser *)
+	mutable input_format: string;
+	mutable as3_mode: bool;
 	(* output *)
 	mutable file : string;
 	mutable flash_version : float;
@@ -132,6 +135,9 @@ let create v =
 		js_gen = None;
 		load_extern_type = [];
 		defines_signature = None;
+		(* default parser is haxe *)
+		input_format="hx";
+		as3_mode=false;
 		warning = (fun _ _ -> assert false);
 		error = (fun _ _ -> assert false);
 		basic = {

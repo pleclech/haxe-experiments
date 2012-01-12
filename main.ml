@@ -90,6 +90,8 @@ let make_path f =
 	let cl = ExtString.String.nsplit f "." in
 	let cl = (match List.rev cl with
 		| ["hx";path] -> ExtString.String.nsplit path "/"
+		| ["as";path] -> ExtString.String.nsplit path "/"
+(*		| ["as3";path] -> ExtString.String.nsplit path "/" *)
 		| _ -> cl
 	) in
 	let error() = failwith ("Invalid class name " ^ f) in
@@ -316,7 +318,7 @@ let setup_cache rcom cache =
 			if time <> ftime then raise Not_found;
 			data
 		with Not_found ->
-			let data = Typeload.parse_file com file p in
+			let data = !Typeload.parse_file_hook com file p in
 			if rcom.verbose && not com.verbose then print_endline ("Parsed " ^ ffile);
 			Hashtbl.replace cache.cached_files fkey (ftime,data);
 			data
@@ -397,6 +399,7 @@ and wait_loop com host port =
 			(try
 				Common.display_default := false;
 				Parser.resume_display := Ast.null_pos;
+				As3parser.resume_display := Ast.null_pos;
 				process_params flush [] data
 			with Completion str ->
 				if verbose then print_endline ("Completion Response =\n" ^ str);
@@ -411,7 +414,7 @@ and wait_loop com host port =
 
 and init flush ctx =
 	let usage = Printf.sprintf
-		"haXe Compiler %d.%.2d - (c)2005-2011 Motion-Twin\n Usage : haxe%s -main <class> [-swf|-js|-neko|-php|-cpp|-as3] <output> [options]\n Options :"
+		"haXe Compiler %d.%.2d - (c)2005-2011 Motion-Twin\n@pleclech builtin hack\n Usage : haxe%s -main <class> [-swf|-js|-neko|-php|-cpp|-as3] <output> [options]\n Options :"
 		(version / 100) (version mod 100) (if Sys.os_type = "Win32" then ".exe" else "")
 	in
 	let com = ctx.com in
@@ -431,8 +434,13 @@ try
 	Common.define com ("haxe_" ^ string_of_int version);
 	com.warning <- (fun msg p -> message ctx ("Warning : " ^ msg) p);
 	com.error <- error ctx;
+	
 	Parser.display_error := (fun e p -> com.error (Parser.error_msg e) p);
 	Parser.use_doc := !Common.display_default;
+
+	As3parser.display_error := (fun e p -> com.error (As3parser.error_msg e) p);
+	As3parser.use_doc := !Common.display_default;
+
 	(try
 		let p = Sys.getenv "HAXE_LIBRARY_PATH" in
 		let rec loop = function
@@ -488,6 +496,7 @@ try
 		),"<directory> : generate C++ code into target directory");
 		("-xml",Arg.String (fun file ->
 			Parser.use_doc := true;
+			As3parser.use_doc := true;
 			xml_out := Some file
 		),"<file> : generate XML types description");
 		("-main",Arg.String (fun cl ->
@@ -502,7 +511,9 @@ try
 		),"<library[:version]> : use a haxelib library");
 		("-D",Arg.String (fun var ->
 			(match var with
-			| "use_rtti_doc" -> Parser.use_doc := true
+			| "use_rtti_doc" -> 
+				Parser.use_doc := true;
+				As3parser.use_doc := true
 			| "no_opt" -> com.foptimize <- false
 			| _ -> ());
 			Common.define com var
@@ -520,12 +531,15 @@ try
 		),"<version> : change the SWF version (6 to 10)");
 		("-swf-header",Arg.String (fun h ->
 			try
-				swf_header := Some (match ExtString.String.nsplit h ":" with
-				| [width; height; fps] ->
-					(int_of_string width,int_of_string height,float_of_string fps,0xFFFFFF)
-				| [width; height; fps; color] ->
-					(int_of_string width, int_of_string height, float_of_string fps, int_of_string ("0x" ^ color))
-				| _ -> raise Exit)
+				if (h="none") then
+					swf_header := None
+				else
+					swf_header := Some (match ExtString.String.nsplit h ":" with
+					| [width; height; fps] ->
+						(int_of_string width,int_of_string height,float_of_string fps,0xFFFFFF)
+					| [width; height; fps; color] ->
+						(int_of_string width, int_of_string height, float_of_string fps, int_of_string ("0x" ^ color))
+					| _ -> raise Exit)
 			with
 				_ -> raise (Arg.Bad "Invalid SWF header format")
 		),"<header> : define SWF header (width:height:fps:color)");
@@ -589,12 +603,21 @@ try
 				com.display <- true;
 				Common.display_default := true;
 				Common.define com "display";
+
 				Parser.use_doc := true;
 				Parser.resume_display := {
 					Ast.pfile = Common.get_full_path file;
 					Ast.pmin = pos;
 					Ast.pmax = pos;
 				};
+
+				As3parser.use_doc := true;
+				As3parser.resume_display := {
+					Ast.pfile = Common.get_full_path file;
+					Ast.pmin = pos;
+					Ast.pmax = pos;
+				};
+
 		),": display code tips");
 		("--no-output", Arg.Unit (fun() -> no_output := true),": compiles but does not generate any file");
 		("--times", Arg.Unit (fun() -> measure_times := true),": measure compilation times");
@@ -663,12 +686,24 @@ try
 			set_platform Flash file;
 			if com.flash_version < 9. then com.flash_version <- 9.;
 		),"<file> : [deprecated] compile code to Flash9 SWF file");
+		("-input-format",Arg.String (fun fmt ->
+	    (
+				match fmt with
+					| "hx" -> com.input_format <- fmt
+					| "as" -> 
+						Typeload.parse_file_hook := As3parser.do_parse_file;
+						Typeload.file_ext_allowed := [".hx";".as"];
+						com.input_format <- fmt
+					| _ -> raise (Arg.Bad ("-input-format : Unknown parsing format : " ^ fmt))
+			)
+		),"<format> : hx for haxe file only else as for hx/as file parsing");
 	] in
 	let current = ref 0 in
 	let args = Array.of_list ("" :: ctx.params) in
 	let args_callback cl = classes := make_path cl :: !classes in
 	Arg.parse_argv ~current args (basic_args_spec @ adv_args_spec) args_callback usage;
 	add_libs com (!cp_libs);
+	if com.input_format="as" && Common.defined com "flash_strict" then com.as3_mode <- true;
 	(try ignore(Common.find_file com "mt/Include.hx"); Common.define com "mt"; with Not_found -> ());
 	if com.display then begin
 		xml_out := None;
@@ -802,6 +837,8 @@ with
 		error ctx (Lexer.error_msg m) p
 	| Parser.Error (m,p) ->
 		error ctx (Parser.error_msg m) p
+	| As3parser.Error (m,p) ->
+		error ctx (As3parser.error_msg m) p
 	| Typecore.Error (Typecore.Forbid_package _,_) when !Common.display_default && ctx.has_next ->
 		()
 	| Typecore.Error (m,p) ->

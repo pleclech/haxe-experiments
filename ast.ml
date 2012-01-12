@@ -192,6 +192,8 @@ and expr_def =
 	| EDisplayNew of type_path
 	| ETernary of expr * expr * expr
 	| ECheckType of expr * complex_type
+	(* needed for language that allow const as as3 *)
+	| EVals of (string * complex_type option * expr option) list
 
 and expr = expr_def * pos
 

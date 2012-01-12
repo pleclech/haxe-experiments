@@ -124,6 +124,9 @@ let get_error_pos printer p =
 		end else
 			Printf.sprintf "%s lines %d-%d" (printer p.pfile l1) l1 l2
 
+(* helper to get a file from a position *)
+let get_file_from_pos p = (try Hashtbl.find all_files p.pfile with Not_found -> make_file p.pfile)
+
 let reset() = Buffer.reset buf
 let contents() = Buffer.contents buf
 let store lexbuf = Buffer.add_string buf (lexeme lexbuf)

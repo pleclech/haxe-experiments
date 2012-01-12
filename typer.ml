@@ -432,6 +432,23 @@ let field_access ctx mode f t e p =
 		| AccRequire r ->
 			error_require r p
 
+let do_autocall ctx m e el p = 
+	if (has_meta ":autocall" m) then match e with
+		| AKUsing (et,ef,eparam) ->
+			(match et.eexpr with
+			| TField (ec,_) ->
+				(match !type_field_rec ctx ec ef.cf_name p MCall with
+				| AKExpr _ | AKField _ | AKInline _ ->
+					let params, tret = (match follow et.etype with
+						| TFun ( _ :: args,r) -> unify_call_params ctx (Some (ef.cf_name,ef.cf_meta)) el args r p false
+						| _ -> assert false
+					) in
+					AKExpr(make_call ctx et (eparam::params) tret p)
+				| _ -> assert false)
+			| _ -> assert false)
+	else
+		e	
+
 let using_field ctx mode e i p =
 	if mode = MSet then raise Not_found;
 	let rec loop = function
@@ -448,7 +465,8 @@ let using_field ctx mode e i p =
 					(try unify_raise ctx e.etype t0 p with Error (Unify _,_) -> raise Not_found);
 					if follow e.etype == t_dynamic && follow t0 != t_dynamic then raise Not_found;
 					let et = type_module_type ctx (TClassDecl c) None p in
-					AKUsing (mk (TField (et,i)) t p,f,e)
+					let ret=AKUsing (mk (TField (et,i)) t p,f,e) in
+						do_autocall ctx f.cf_meta ret [] p
 				| _ -> raise Not_found)
 			with Not_found ->
 				loop l
@@ -1152,6 +1170,19 @@ and type_ident_noerr ctx i is_type p mode =
 		type_ident ctx i is_type p mode
 	with Not_found -> try
 		(* lookup type *)
+		let is_type, i =
+			if ctx.com.input_format="as" then begin
+				(
+					match i with
+						| "int" -> true, "Int"
+						| "float" -> true, "Float"
+						| "uint" -> true, "UInt"
+						| "void" -> true, "Void"
+						| _ -> is_type, i
+				)
+			end else
+				is_type, i
+		in
 		if not is_type then raise Not_found;
 		let e = (try type_type ctx ([],i) p with Error (Module_not_found ([],name),_) when name = i -> raise Not_found) in
 		AKExpr e
@@ -1899,25 +1930,41 @@ and type_call ctx e el p =
 			ignore(acc_get ctx acc p);
 			assert false
 		| AKExpr e | AKField (e,_) as acc ->
-			let el , t = (match follow e.etype with
+			let el , t, ret = (match follow e.etype with
 			| TFun (args,r) ->
 				let fopts = (match acc with AKField (_,f) -> Some (f.cf_name,f.cf_meta) | _ -> match e.eexpr with TField (e,f) -> Some (f,[]) | _ -> None) in
-				unify_call_params ctx fopts el args r p false
+				let el, t = unify_call_params ctx fopts el args r p false in
+				el, t, None
 			| TMono _ ->
 				let t = mk_mono() in
 				let el = List.map (type_expr ctx) el in
 				unify ctx (tfun (List.map (fun e -> e.etype) el) t) e.etype e.epos;
-				el, t
+				el, t , None
 			| t ->
 				let el = List.map (type_expr ctx) el in
-				el, if t == t_dynamic then
-					t_dynamic
-				else if ctx.untyped then
-					mk_mono()
-				else
-					error (s_type (print_context()) e.etype ^ " cannot be called") e.epos
+				let t,ret =
+					if t == t_dynamic then
+						t_dynamic, None
+					else if ctx.untyped then
+						mk_mono(), None
+					else 
+						(* add as3 type cast syntax i.e. MovieClip(xxx) *)
+						if ((ctx.com.input_format="as") && ((List.length el)=1)) then begin
+							let texpr = (
+								match e.eexpr with
+									| TTypeExpr((TClassDecl _) as cd) -> cd 
+									| TTypeExpr((TEnumDecl _) as ed) -> ed 
+									| _ -> error "Cast type must be a class or an enum" p
+							) in
+								t, Some (mk (TCast (List.hd el,Some texpr)) e.etype p)
+						end else
+							error (s_type (print_context()) e.etype ^ " cannot be called") e.epos
+				in el, t, ret
 			) in
-			mk (TCall (e,el)) t p
+			match ret with
+				| Some(r) -> r
+				| _ -> mk (TCall (e,el)) t p
+
 
 (* ---------------------------------------------------------------------- *)
 (* FINALIZATION *)

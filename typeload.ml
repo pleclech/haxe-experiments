@@ -21,7 +21,7 @@ open Type
 open Common
 open Typecore
 
-let parse_file com file p =
+let do_parse_file com file p =
 	let ch = (try open_in_bin file with _ -> error ("Could not open " ^ file) p) in
 	let t = Common.timer "parsing" in
 	Lexer.init file;
@@ -31,7 +31,10 @@ let parse_file com file p =
 	if com.verbose then print_endline ("Parsed " ^ file);
 	data
 
-let parse_hook = ref parse_file
+(* let add a hook so you can do parsing from another parser *)
+let parse_file_hook = ref do_parse_file
+
+let parse_hook = parse_file_hook
 
 let type_function_param ctx t e opt p =
 	match e with
@@ -1486,6 +1489,8 @@ let type_module ctx m tdecls loadp =
 	List.iter (delay ctx) (List.rev (!delays));
 	m
 
+let file_ext_allowed = ref [".hx"]
+
 let parse_module ctx m p =
 	let remap = ref (fst m) in
 	let file = (match m with
@@ -1499,8 +1504,17 @@ let parse_module ctx m p =
 				with Not_found -> x
 			) in
 			String.concat "/" (x :: l) ^ "/" ^ name
-	) ^ ".hx" in
-	let file = Common.find_file ctx.com file in
+	) in 
+	let file = (
+		let rec loop = function
+			| [] -> raise (Error (Module_not_found m,p))
+			| h :: t ->
+				try 
+					Common.find_file ctx.com (file ^ h) 
+				with
+					Not_found -> loop t
+		in loop !file_ext_allowed
+	) in
 	let pack, decls = (!parse_hook) ctx.com file p in
 	if pack <> !remap then begin
 		let spack m = if m = [] then "<empty>" else String.concat "." m in
