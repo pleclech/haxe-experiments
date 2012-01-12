@@ -1272,19 +1272,23 @@ let rec gen_expr_content ctx retval e =
 					| VGlobal id -> id
 					| _ -> assert false
 				) in
-				match classify ctx e.etype with
-				| KType n when (match n with HMPath ([],"String") -> false | _ -> true) ->
-					(* for normal classes, we can use native cast *)
+				(* force native cast *)
+				if (ctx.com.as3_mode) then
 					write ctx (HCast tid)
-				| _ ->
-					(* we need to check with "is" first *)
-					write ctx HDup;
-					write ctx (HIsType tid);
-					let j = jump ctx J3True in
-					write ctx (HString "Class cast error");
-					write ctx HThrow;
-					j();
-					write ctx (HCast tid)
+				else
+					match classify ctx e.etype with
+					| KType n when (match n with HMPath ([],"String") -> false | _ -> true) ->
+						(* for normal classes, we can use native cast *)
+						write ctx (HCast tid)
+					| _ ->
+						(* we need to check with "is" first *)
+						write ctx HDup;
+						write ctx (HIsType tid);
+						let j = jump ctx J3True in
+						write ctx (HString "Class cast error");
+						write ctx HThrow;
+						j();
+						write ctx (HCast tid)
 		end
 
 and gen_call ctx retval e el r =
