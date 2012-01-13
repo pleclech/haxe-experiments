@@ -835,6 +835,20 @@ and parse_block_elt = parser
 	| [< '(Const (Ident "const"), p1); vl = psep Comma parse_var_decl; p2 = optsemicolon >] -> (EVals vl, punion p1 p2)
 	| [< e = expr; _ = optsemicolon >] -> e
 
+and parse_init_for_block_elt = parser
+	| [< '(Kwd Var, p1); vl = psep Comma parse_var_decl; _ = semicolon >] -> Some (EVars vl, p1)
+	| [< '(Const (Ident "const"), p1); vl = psep Comma parse_var_decl; _ = semicolon >] -> Some (EVals vl, p1)
+	| [< e = expr ; _ = semicolon>] -> Some e
+	| [< _ = semicolon >] -> None
+
+and parse_for_expr = parser
+	| [< e = expr; _ = semicolon >] -> Some e
+	| [<_ = semicolon >] -> None
+
+and parse_last_for_expr = parser
+	| [< e = expr; '(PClose, _) >] -> Some e
+	| [< '(PClose, _) >] -> None
+
 and parse_obj_decl = parser
 	| [< '(Comma, _); s >] ->
 		(match s with parser
@@ -911,12 +925,42 @@ and expr = parser
 (* i),p); e = expr_next (EConst (Int i),p) >] -> e | [< '(Const (Float     *)
 (* f),p); e = expr_next (EConst (Float f),p) >] -> e | [< >] -> serror())  *)
 (* */                                                                      *)
-	| [< '(Kwd For, p); '(POpen, _); it = expr; '(PClose, _); s >] ->
+	| [< '(Kwd For, p); '(POpen, _); ie = parse_init_for_block_elt ; cond = parse_for_expr; last = parse_last_for_expr; s >] ->
+		let cond = match cond with
+			| Some e -> e
+			| None -> (EConst (Ident "true") , p)
+		in
+		(try
+			let e = secure_expr s in
+			let be = match last with
+				| Some c -> EBlock [e;c], pos c
+				| None -> e
+			in let w = (EWhile (cond, be, NormalWhile), (pos e)) in
+			let b = match ie with
+				| Some e -> [e;w]
+				| None -> [w]
+			in
+			(EBlock b, punion p (pos e))
+		 with
+			Display e -> display (
+				let be = match last with
+					| Some c -> EBlock [e;c], pos c
+					| None -> e
+				in let w = (EWhile (cond, be, NormalWhile), (pos e)) in
+				let b = match ie with
+					| Some e -> [e;w]
+					| None -> [w]
+				in
+				(EBlock b, punion p (pos e)))
+		)
+(*
+		| [< '(Kwd For, p); '(POpen, _); it = expr; '(PClose, _); s >] ->
 		(try
 			let e = secure_expr s in
 			(EFor (it, e), punion p (pos e))
 		with
 			Display e -> display (EFor (it, e), punion p (pos e)))
+*)
 	| [< '(Kwd If, p); '(POpen, _); cond = expr; '(PClose, _); e1 = expr; s >] ->
 		let e2 = (match s with parser
 			| [< '(Kwd Else, _); e2 = expr; s >] -> Some e2
