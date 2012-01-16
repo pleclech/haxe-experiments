@@ -514,10 +514,7 @@ let remove_debug_infos as3 =
 	in
 	As3hlparse.flatten (List.map loop_static hl)
 
-let parse_swf com file =
-	let t = Common.timer "read swf" in
-	let file = (try Common.find_file com file with Not_found -> failwith ("SWF Library not found : " ^ file)) in
-	let ch = IO.input_channel (open_in_bin file) in
+let parse_swf_from_ch com ch file =
 	let h, tags = (try Swf.parse ch with _ -> failwith ("The input swf " ^ file ^ " is corrupted")) in
 	IO.close_in ch;
 	List.iter (fun t ->
@@ -526,8 +523,33 @@ let parse_swf com file =
 			t.tdata <- TActionScript3 (id,remove_debug_infos as3)
 		| _ -> ()
 	) tags;
-	t();
-	(h,tags)
+	(h, tags)
+	
+let parse_swc com file =
+	let t = Common.timer "read swc" in
+	let ic = (try Zip.open_in file with _ -> failwith ("SWC Library not found : " ^ file)) in
+	let e = (match (List.filter (fun e-> e.Zip.filename="library.swf") (Zip.entries ic)) with
+				| x :: _ -> x
+				| [] -> 
+					Zip.close_in ic;
+				failwith ("library.swf not found in " ^ file))
+	in 
+		let e = Zip.read_entry ic e in
+			Zip.close_in ic;
+			let h,tags = parse_swf_from_ch com (IO.input_string e) file in
+				t();
+				(h,tags)
+
+let parse_swf com file =
+	match List.rev (ExtString.String.nsplit file ".") with
+			| "swf" :: _ ->
+				let t = Common.timer "read swf" in
+					let file = (try Common.find_file com file with Not_found -> failwith ("SWF Library not found : " ^ file)) in 
+					let h,tags=parse_swf_from_ch com (IO.input_channel (open_in_bin file)) file in
+						t();
+						h, tags
+			| "swc" :: _ -> parse_swc com file
+			| _ -> failwith ("Unknow library file format : " ^ file)
 
 (* ------------------------------- *)
 
